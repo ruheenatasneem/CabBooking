@@ -1,0 +1,580 @@
+backend code: api /route/driver.py
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from ...db.session import get_db
+from ...models.models import Driver, User
+
+router = APIRouter(prefix="/api/drivers", tags=["drivers"])
+
+
+# ------------------------
+# GET all drivers
+# ------------------------
+@router.get("/")
+def list_drivers(db: Session = Depends(get_db)):
+    return db.query(Driver).all()
+
+
+# ------------------------
+# GET a specific driver
+# ------------------------
+@router.get("/{driver_id}")
+def get_driver(driver_id: int, db: Session = Depends(get_db)):
+    driver = db.query(Driver).filter(Driver.id == driver_id).first()
+    if not driver:
+        raise HTTPException(404, "Driver not found")
+    return driver
+
+
+# ------------------------
+# Create a new driver (optional)
+# ------------------------
+@router.post("/")
+def create_driver(user_id: int, vehicle_info: str, db: Session = Depends(get_db)):
+    # Check if user exists
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User does not exist")
+
+    new_driver = Driver(
+        user_id=user_id,
+        vehicle_info=vehicle_info,
+        status="offline",
+    )
+    db.add(new_driver)
+    db.commit()
+    db.refresh(new_driver)
+
+    return new_driver
+
+
+# ------------------------
+# Update driver location
+# ------------------------
+@router.put("/{driver_id}/location")
+def update_driver_location(
+    driver_id: int, longitude: float, latitude: float, db: Session = Depends(get_db)
+):
+    driver = db.query(Driver).filter(Driver.id == driver_id).first()
+    if not driver:
+        raise HTTPException(404, "Driver not found")
+
+    point = f"POINT({longitude} {latitude})"
+    driver.current_location = point
+
+    db.commit()
+    db.refresh(driver)
+
+    return {"message": "Location updated", "driver": driver}
+
+
+
+
+ride.py  
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from ...db.session import get_db
+from ...schemas.schemas import RideRequest, RideOut
+from ...models.models import Ride, User, Driver
+from ...utils.geo import create_point_wkt
+
+
+router = APIRouter(prefix="/api/rides", tags=["rides"])
+
+
+@router.post("/request", response_model=RideOut)
+async def request_ride(payload: RideRequest, db: Session = Depends(get_db)):
+# create ride row
+ ride = Ride(
+rider_id=1, # placeholder — replace with current user
+pickup_point=create_point_wkt(payload.pickup.lat, payload.pickup.lng),
+drop_point=create_point_wkt(payload.drop.lat, payload.drop.lng),
+status='requested'
+)
+ db.add(ride)
+ db.commit()
+ db.refresh(ride)
+
+
+# TODO: publish to nearby drivers via sockets/pubsub
+ return ride
+
+
+@router.get("/estimate")
+async def estimate(origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: float):
+# call Google Distance Matrix (keep simple here)
+ return {"fare_estimate": 100.0, "distance_meters": 1200, "duration_secs": 300}
+
+
+
+user.py
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from ...db.session import get_db
+from ...models.models import User
+
+router = APIRouter(prefix="/api/users", tags=["users"])
+
+
+@router.get("/")
+def list_users(db: Session = Depends(get_db)):
+    return db.query(User).all()
+
+
+@router.get("/{user_id}")
+def get_user(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    return user
+
+
+
+
+
+
+core/config.py 
+
+from pydantic import BaseSettings
+
+
+class Settings(BaseSettings):
+ DATABASE_URL: str
+ REDIS_URL: str = "redis://localhost:6379/0"
+ STRIPE_SECRET: str = ""
+ GOOGLE_MAPS_KEY: str = ""
+ SECRET_KEY: str = "dev-secret"
+class Config:
+ env_file = "../../.env"
+
+
+settings = Settings()  
+
+db/base
+rom sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
+
+session.py
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+DATABASE_URL = "postgresql://postgres:123@localhost:5432/cabdb"
+
+engine = create_engine(DATABASE_URL, echo=True)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+
+# Dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close() 
+
+
+frontend /
+carosel
+"use client";
+
+import { Swiper, SwiperSlide } from "swiper/react";
+import "swiper/css";
+
+export default function Carousel() {
+  return (
+    <Swiper
+      spaceBetween={20}
+      slidesPerView={1}
+      loop={true}
+      autoplay={{ delay: 1000 }}
+    >
+      <SwiperSlide>
+        <img 
+          src="https://images.pexels.com/photos/210019/pexels-photo-210019.jpeg"
+          className="w-full h-80 object-cover rounded-xl"
+          alt="Ride Image 1"
+        />
+
+      </SwiperSlide>
+
+      <SwiperSlide>
+        <img 
+          src="https://images.pexels.com/photos/358070/pexels-photo-358070.jpeg"
+          className="w-full h-80 object-cover rounded-xl"
+          alt="Ride Image 2"
+        />
+      </SwiperSlide>
+
+      <SwiperSlide>
+        <img 
+          src="https://images.pexels.com/photos/712618/pexels-photo-712618.jpeg"
+          className="w-full h-80 object-cover rounded-xl"
+          alt="Ride Image 3"
+        />
+      </SwiperSlide>
+    </Swiper>
+  );
+}
+
+layout.js 
+
+import Navbar from './Navbar';
+
+export default function Layout({ children }) {
+  return (
+    <div className="min-h-screen flex flex-col bg-gray-50">
+      <Navbar />
+      <main className="flex-1 p-4 container mx-auto">{children}</main>
+    </div>
+  );
+} 
+
+
+map.js 
+
+import { GoogleMap, Marker, useLoadScript } from "@react-google-maps/api";
+
+export default function Map({ markers = [], onSelect }) {
+  const { isLoaded } = useLoadScript({
+    googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY,
+  });
+
+  const defaultCenter = { lat: 12.9716, lng: 77.5946 };
+
+  if (!isLoaded) {
+    return <div className="h-80 flex items-center justify-center">Loading map...</div>;
+  }
+
+  return (
+    <div className="h-80 rounded-md border overflow-hidden">
+      <GoogleMap
+        zoom={13}
+        center={defaultCenter}
+        mapContainerClassName="w-full h-full"
+        onClick={(e) => {
+          const lat = e.latLng.lat();
+          const lng = e.latLng.lng();
+          onSelect?.(lat, lng);
+        }}
+      >
+        {markers.map((m) => (
+          <Marker
+            key={m.id}
+            position={{ lat: m.lat, lng: m.lng }}
+            label={m.label}
+          />
+        ))}
+      </GoogleMap>
+    </div>
+  );
+}
+navbar.js
+
+import Link from 'next/link';
+
+export default function Navbar() {
+  return (
+    <header className="border-b bg-white">
+      <nav className="container mx-auto flex items-center justify-between p-4">
+        <Link href="/" className="font-semibold text-xl text-gray-800">
+          Book your ride
+        </Link>
+        <div className="flex gap-4">
+          <Link href="/book" className="text-sm text-blue-600">Book</Link>
+          <Link href="/ride/1" className="text-sm text-blue-600">Track</Link>
+        </div>
+      </nav>
+    </header>
+  );
+}
+
+
+
+Ridestatus.js 
+
+
+export default function RideStatus({ status, fareEstimate, distanceMeters, durationSecs }) {
+  return (
+    <div className="rounded-md border bg-white p-3 text-sm">
+      <div><span className="font-medium">Status:</span> {status ?? 'unknown'}</div>
+      {fareEstimate != null && (
+        <div><span className="font-medium">Fare estimate:</span> ₹{fareEstimate.toFixed(2)}</div>
+      )}
+      {distanceMeters != null && (
+        <div><span className="font-medium">Distance:</span> {(distanceMeters / 1000).toFixed(2)} km</div>
+      )}
+      {durationSecs != null && (
+        <div><span className="font-medium">ETA:</span> {(durationSecs / 60).toFixed(0)} min</div>
+      )}
+    </div>
+  );
+}
+
+pages / ride 
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
+import Layout from '../../components/Layout';
+import Map from '../../components/Map';
+import RideStatus from '../../components/RideStatus';
+import { subscribeToRide } from '../../services/socket';
+
+export default function RideTrack() {
+  const router = useRouter();
+  const { id } = router.query;
+  const [driver, setDriver] = useState(null);
+  const [status, setStatus] = useState('requested');
+
+  useEffect(() => {
+    if (!id) return;
+    const unsubscribe = subscribeToRide(Number(id), (data) => {
+      setDriver({ lat: data.lat, lng: data.lng });
+      setStatus('in_progress');
+    });
+    return unsubscribe;
+  }, [id]);
+
+  return (
+    <Layout>
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="rounded-md border bg-white p-4">
+          <h2 className="font-semibold mb-3">Live driver location</h2>
+          <Map
+            markers={[
+              ...(driver ? [{ id: 'driver', lat: driver.lat, lng: driver.lng, label: 'Driver' }] : []),
+            ]}
+          />
+          <div className="mt-3 text-xs text-gray-600">
+            {driver ? `Driver at (${driver.lat.toFixed(4)}, ${driver.lng.toFixed(4)})` : 'Waiting for driver updates...'}
+          </div>
+        </div>
+
+        <div className="rounded-md border bg-white p-4">
+          <h2 className="font-semibold mb-3">Ride status</h2>
+          <RideStatus status={status} />
+          <p className="text-xs mt-2 text-gray-600">
+            This page listens for Socket.IO events: "driver_location" scoped to ride room.
+          </p>
+        </div>
+      </div>
+    </Layout>
+  );
+}
+_app.js 
+
+import '../styles/globals.css';
+
+export default function App({ Component, pageProps }) {
+  return <Component {...pageProps} />;
+}
+
+book.js 
+
+import { useState } from 'react';
+import Layout from '../components/Layout';
+import Map from '../components/Map';
+import RideStatus from '../components/RideStatus';
+import api from '../services/api';
+
+export default function Book() {
+  const [pickup, setPickup] = useState({ lat: 12.9716, lng: 77.5946 });
+  const [drop, setDrop] = useState({ lat: 12.9352, lng: 77.6245 });
+  const [estimate, setEstimate] = useState(null);
+  const [ride, setRide] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  async function getEstimate() {
+    try {
+      setLoading(true);
+      const { data } = await api.get('/api/rides/estimate', {
+        params: {
+          origin_lat: pickup.lat,
+          origin_lng: pickup.lng,
+          dest_lat: drop.lat,
+          dest_lng: drop.lng,
+        },
+      });
+      setEstimate(data);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function requestRide() {
+    try {
+      setLoading(true);
+      const { data } = await api.post('/api/rides/request', {
+        pickup, drop,
+      });
+      setRide(data);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Layout>
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="rounded-md border bg-white p-4">
+          <h2 className="font-semibold mb-3">Select pickup & drop</h2>
+          <Map
+            markers={[
+              { id: 'pickup', lat: pickup.lat, lng: pickup.lng, label: 'Pickup' },
+              { id: 'drop', lat: drop.lat, lng: drop.lng, label: 'Drop' },
+            ]}
+            onSelect={(lat, lng) => setPickup({ lat, lng })}
+          />
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="text-xs">
+              <div className="font-medium">Pickup</div>
+              <div>Lat: {pickup.lat.toFixed(4)}</div>
+              <div>Lng: {pickup.lng.toFixed(4)}</div>
+            </div>
+            <div className="text-xs">
+              <div className="font-medium">Drop</div>
+              <div>Lat: {drop.lat.toFixed(4)}</div>
+              <div>Lng: {drop.lng.toFixed(4)}</div>
+            </div>
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button
+              className="px-3 py-2 rounded bg-gray-100 border text-sm"
+              onClick={getEstimate}
+              disabled={loading}
+            >
+              Get estimate
+            </button>
+            <button
+              className="px-3 py-2 rounded bg-blue-600 text-white text-sm"
+              onClick={requestRide}
+              disabled={loading}
+            >
+              Request ride
+            </button>
+          </div>
+        </div>
+
+        <div className="rounded-md border bg-white p-4">
+          <h2 className="font-semibold mb-3">Details</h2>
+          <RideStatus
+            status={ride?.status}
+            fareEstimate={estimate?.fare_estimate ?? ride?.fare_estimate}
+            distanceMeters={estimate?.distance_meters}
+            durationSecs={estimate?.duration_secs}
+          />
+          {ride && (
+            <div className="mt-3 text-sm">
+              <div><span className="font-medium">Ride ID:</span> {ride.id}</div>
+              <div className="mt-2">
+                Track: <a className="text-blue-600 underline" href={`/ride/${ride.id}`}>/ride/{ride.id}</a>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </Layout>
+  );
+}
+
+index.js 
+import Layout from '../components/Layout';
+import Link from 'next/link';
+import Carousel from '../components/Carousel';
+
+export default function Home() {
+  return (
+    <Layout>
+      <div className="rounded-md border bg-white p-6 space-y-6">
+        
+        {/* Carousel Section */}
+        <Carousel />
+
+
+        {/* Welcome Section */}
+        <div >
+          <h1 className="text-xl font-bold mb-2">Welcome</h1>
+          <p className="text-sm mb-4">Book a cab, track your driver in real-time.</p>
+
+          <div className="flex gap-2">
+            <Link href="/book" className="px-25 py-3 rounded bg-blue-600 text-white text-sm">
+              Book a ride
+            </Link>
+            <Link href="/ride/1" className="px-25 py-3 rounded bg-green border text-sm">
+              Track sample ride
+            </Link>
+          </div>
+        </div>
+
+      </div>
+      
+    </Layout>
+  );
+}
+
+style global.css
+
+@import "tailwindcss";
+
+:root {
+  color-scheme: rgb(12, 107, 124);
+}
+
+html, body, #__next {
+  height: 100%;
+} 
+
+package.json 
+
+{
+  "name": "frontend-new",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@react-google-maps/api": "^2.20.7",
+    "axios": "^1.13.2",
+    "next": "16.0.5",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "swiper": "^12.0.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.4.22",
+    "eslint": "^9",
+    "eslint-config-next": "16.0.5",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.17",
+    "typescript": "^5"
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
